@@ -3,8 +3,20 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 import 'package:http/http.dart' as http;
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
-void main() {
+import 'firebase_options.dart';
+
+// ============================================================
+// MAIN
+// ============================================================
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
+
   runApp(
     ChangeNotifierProvider(
       create: (_) => ItemListModel(),
@@ -33,7 +45,6 @@ class TradingStrategy {
 
 // ============================================================
 // PROVIDER MODEL
-// All shared strategy and activity data lives here.
 // ============================================================
 
 class ItemListModel extends ChangeNotifier {
@@ -94,14 +105,32 @@ class ItemListModel extends ChangeNotifier {
     for (final strategy in _strategies) {
       if (strategy.id == id) {
         strategy.enabled = enabled;
+
         _activityLog.insert(
           0,
           '${strategy.name} ${enabled ? 'enabled' : 'disabled'}',
         );
+
         notifyListeners();
         return;
       }
     }
+  }
+
+  void removeStrategy(int id) {
+    final index = _strategies.indexWhere((strategy) => strategy.id == id);
+
+    if (index == -1) return;
+
+    final removedStrategy = _strategies.removeAt(index);
+
+    _activityLog.insert(0, 'Removed strategy: ${removedStrategy.name}');
+
+    if (_selectedStrategyId == id) {
+      _selectedStrategyId = null;
+    }
+
+    notifyListeners();
   }
 }
 
@@ -126,7 +155,190 @@ class AutoTraderApp extends StatelessWidget {
         scaffoldBackgroundColor: const Color(0xFF101410),
         useMaterial3: true,
       ),
-      home: const DashboardScreen(),
+      home: const AuthGate(),
+    );
+  }
+}
+
+// ============================================================
+// FIREBASE AUTHENTICATION GATE
+// ============================================================
+
+class AuthGate extends StatelessWidget {
+  const AuthGate({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return StreamBuilder<User?>(
+      stream: FirebaseAuth.instance.authStateChanges(),
+      builder: (context, snapshot) {
+        if (snapshot.connectionState == ConnectionState.waiting) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        if (snapshot.hasData) {
+          return const DashboardScreen();
+        }
+
+        return const LoginScreen();
+      },
+    );
+  }
+}
+
+// ============================================================
+// LOGIN AND REGISTRATION SCREEN
+// ============================================================
+
+class LoginScreen extends StatefulWidget {
+  const LoginScreen({super.key});
+
+  @override
+  State<LoginScreen> createState() => _LoginScreenState();
+}
+
+class _LoginScreenState extends State<LoginScreen> {
+  final emailController = TextEditingController();
+  final passwordController = TextEditingController();
+
+  bool isRegistering = false;
+  bool isLoading = false;
+
+  @override
+  void dispose() {
+    emailController.dispose();
+    passwordController.dispose();
+    super.dispose();
+  }
+
+  Future<void> authenticate() async {
+    final email = emailController.text.trim();
+    final password = passwordController.text.trim();
+
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Enter your email and password.')),
+      );
+      return;
+    }
+
+    setState(() {
+      isLoading = true;
+    });
+
+    try {
+      if (isRegistering) {
+        await FirebaseAuth.instance.createUserWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+      } else {
+        await FirebaseAuth.instance.signInWithEmailAndPassword(
+          email: email,
+          password: password,
+        );
+      }
+    } on FirebaseAuthException catch (e) {
+      String message = e.message ?? 'Authentication failed.';
+
+      if (e.code == 'email-already-in-use') {
+        message = 'This email is already registered.';
+      } else if (e.code == 'invalid-email') {
+        message = 'Enter a valid email address.';
+      } else if (e.code == 'weak-password') {
+        message = 'Password must be at least 6 characters.';
+      } else if (e.code == 'user-not-found' ||
+          e.code == 'wrong-password' ||
+          e.code == 'invalid-credential') {
+        message = 'Incorrect email or password.';
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(message)));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Something went wrong: $e')));
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          isLoading = false;
+        });
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      body: Center(
+        child: SingleChildScrollView(
+          padding: const EdgeInsets.all(24),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              const Icon(Icons.show_chart, size: 75, color: Colors.greenAccent),
+              const SizedBox(height: 16),
+              const Text(
+                'AUTO TRADER',
+                style: TextStyle(fontSize: 28, fontWeight: FontWeight.bold),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                isRegistering ? 'Create your account' : 'Welcome back',
+                style: const TextStyle(color: Colors.white60),
+              ),
+              const SizedBox(height: 32),
+              TextField(
+                controller: emailController,
+                keyboardType: TextInputType.emailAddress,
+                decoration: const InputDecoration(
+                  labelText: 'Email',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.email),
+                ),
+              ),
+              const SizedBox(height: 16),
+              TextField(
+                controller: passwordController,
+                obscureText: true,
+                decoration: const InputDecoration(
+                  labelText: 'Password',
+                  border: OutlineInputBorder(),
+                  prefixIcon: Icon(Icons.lock),
+                ),
+              ),
+              const SizedBox(height: 24),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton(
+                  onPressed: isLoading ? null : authenticate,
+                  child: isLoading
+                      ? const CircularProgressIndicator()
+                      : Text(isRegistering ? 'Register' : 'Login'),
+                ),
+              ),
+              TextButton(
+                onPressed: () {
+                  setState(() {
+                    isRegistering = !isRegistering;
+                  });
+                },
+                child: Text(
+                  isRegistering
+                      ? 'Already have an account? Login'
+                      : 'Need an account? Register',
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
     );
   }
 }
@@ -158,6 +370,13 @@ class DashboardScreen extends StatelessWidget {
                 context,
                 MaterialPageRoute(builder: (_) => const ActivityScreen()),
               );
+            },
+          ),
+          IconButton(
+            tooltip: 'Logout',
+            icon: const Icon(Icons.logout),
+            onPressed: () async {
+              await FirebaseAuth.instance.signOut();
             },
           ),
         ],
@@ -248,11 +467,35 @@ class DashboardScreen extends StatelessWidget {
                                     color: Colors.greenAccent,
                                   ),
                                   const SizedBox(height: 8),
-                                  Text(
-                                    strategy.name,
-                                    style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                    ),
+                                  Row(
+                                    children: [
+                                      Expanded(
+                                        child: Text(
+                                          strategy.name,
+                                          maxLines: 1,
+                                          overflow: TextOverflow.ellipsis,
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.bold,
+                                          ),
+                                        ),
+                                      ),
+                                      IconButton(
+                                        tooltip: 'Remove strategy',
+                                        visualDensity: VisualDensity.compact,
+                                        padding: EdgeInsets.zero,
+                                        constraints: const BoxConstraints(),
+                                        icon: const Icon(
+                                          Icons.delete_outline,
+                                          color: Colors.redAccent,
+                                          size: 20,
+                                        ),
+                                        onPressed: () {
+                                          context
+                                              .read<ItemListModel>()
+                                              .removeStrategy(strategy.id);
+                                        },
+                                      ),
+                                    ],
                                   ),
                                   const SizedBox(height: 5),
                                   Text(
@@ -379,7 +622,6 @@ class _AddStrategyScreenState extends State<AddStrategyScreen> {
       description: description,
     );
 
-    // The model is updated directly; no data is returned.
     Navigator.pop(context);
   }
 
@@ -553,7 +795,7 @@ Future<List<MarketPost>> fetchMarketPosts() async {
 }
 
 // ============================================================
-// API SCREEN: LOADING, ERROR, EMPTY, DATA, REFRESH
+// MARKET UPDATES API SCREEN
 // ============================================================
 
 class MarketApiScreen extends StatefulWidget {

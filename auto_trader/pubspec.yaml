@@ -1,4 +1,4 @@
-name: auto_trader
+name: week10_provider_lab
 description: "A new Flutter project."
 # The following line prevents the package from being accidentally published to
 # pub.dev using `flutter pub publish`. This is preferred for private packages.
@@ -36,6 +36,9 @@ dependencies:
   cupertino_icons: ^1.0.8
   provider: ^6.1.5+1
   http: ^1.6.0
+  firebase_auth: ^7.0.1
+  cloud_firestore: ^7.1.0
+  firebase_core: ^5.1.0
 
 dev_dependencies:
   flutter_test:
